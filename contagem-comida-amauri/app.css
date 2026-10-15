@@ -295,3 +295,6 @@ input.qin{width:58px}
 .chips.cats .chip{flex:none}
 .top .chips.cats .chip:not(.on){background:transparent;color:var(--cream);border-color:rgba(236,239,177,.35)}
 .top .chips.cats .chip.on{background:var(--cream);color:var(--brand-deep);border-color:var(--cream)}
+.qkgw{flex:none;width:104px}
+.qkgw input.qkg{width:100%;padding-right:30px;text-align:right}
+.qkgw .u{right:9px;font-size:13px}

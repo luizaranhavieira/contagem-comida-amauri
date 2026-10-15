@@ -332,13 +332,7 @@ const Defaults = (() => {
     const { tipo } = tipoMarcas(desc);
     const pesos = pesosDaDescricao(desc);
     if (unidade === 'UNID') return { forma: 'fechadas', embalagem: 'unidade', taraG: null, variantes: [{ nome: 'Padrão', pesoLiqG: null }] };
-    if (pesos.length) {
-      const emb = pesos.some((g) => g >= 1000) ? 'pacote' : 'porcao';
-      return { forma: 'fechadas_abertas', embalagem: emb, taraG: 0, notaPeso: true,
-        variantes: pesos.map((g) => ({ nome: emb === 'porcao' ? `Porção ${FMTG(g)}` : `Pacote ${FMTG(g)}`, pesoLiqG: g })) };
-    }
-    if (tipo === 'PP') return { forma: 'peso', embalagem: 'pote', taraG: null, variantes: [{ nome: 'Padrão', pesoLiqG: null }] };
-    return { forma: 'peso', embalagem: tipo === 'PC' ? 'saco' : 'pacote', taraG: 0, variantes: [{ nome: 'Padrão', pesoLiqG: null }] };
+    return { forma: 'peso', embalagem: 'pacote', taraG: 0, variantes: [{ nome: 'Padrão', pesoLiqG: null }] };
   }
   const FMTG = (g) => (g >= 1000 ? `${String(g / 1000).replace('.', ',')} kg` : `${g} g`);
 
@@ -985,7 +979,7 @@ VIEWS.gestao = () => {
       </div>
     </section>` : ''}
     <button class="card tap lift" data-act="go" data-to="#/hist"><h3>Histórico</h3><div class="muted small">Contagens anteriores, resumo, Excel e comparação</div></button>
-    <button class="card tap lift" data-act="go" data-to="#/cad"><h3>Cadastro</h3><div class="muted small">Produtos, ambientes, recipientes, limites, equipe e importação</div></button>
+    <button class="card tap lift" data-act="go" data-to="#/cad"><h3>Cadastro</h3><div class="muted small">Produtos, ambientes, limites, equipe e importação</div></button>
   </div>`;
 };
 async function comContagem(cid, fn) {
@@ -1277,10 +1271,12 @@ function listaHTML(lista, r) {
     const aberto = S.ui.abKey === it.key;
     const soPeso = it.forma === 'peso';
     const pesoTxt = rr.status === 'sem_estoque' ? '0 kg' : rr.status !== 'nao_contado' && rr.nAbertas && isNum(rr.kgAbertas) ? `${FA(rr.kgAbertas, 3)} kg` : '';
-    const ab = it.forma === 'fechadas' ? '' :
+    const ab = it.forma === 'fechadas' || soPeso ? '' :
       `<button class="btn qab ${soPeso ? 'wide' : ''} ${rr.nAbertas ? 'pri' : ''} ${aberto ? 'on' : ''}" data-act="togAb" data-key="${esc(it.key)}" aria-expanded="${aberto}" aria-label="Pesagens de ${esc(it.descricao)}">${ICON.garrafa}${soPeso ? `<b>${pesoTxt || 'Pesar'}</b>` : rr.nAbertas ? `<b>${rr.nAbertas}</b>` : ''}</button>`;
-    const nomeAct = ehGestor() ? 'abrirItem' : it.forma === 'fechadas' ? 'focoQtd' : 'togAb';
-    const qtd = soPeso ? '' : `<input class="qin" id="q-${esc(it.key)}" inputmode="numeric" pattern="[0-9]*" data-ch="qf" data-key="${esc(it.key)}"
+    const nomeAct = ehGestor() ? 'abrirItem' : 'focoQtd';
+    const kgVal = rr.status === 'nao_contado' ? '' : rr.status === 'sem_estoque' ? '0' : kgTxt(rr.liqG);
+    const qtd = soPeso ? `<div class="unitwrap qkgw"><input class="qin qkg" id="q-${esc(it.key)}" inputmode="decimal" data-ch="qkg" data-key="${esc(it.key)}"
+        value="${esc(kgVal)}" placeholder="—" aria-label="Peso em kg de ${esc(it.descricao)}" autocomplete="off"><span class="u">kg</span></div>` : `<input class="qin" id="q-${esc(it.key)}" inputmode="numeric" pattern="[0-9]*" data-ch="qf" data-key="${esc(it.key)}"
         value="${esc(val)}" placeholder="—" aria-label="${esc(E.f)} de ${esc(it.descricao)}" autocomplete="off">
       <span class="qstep">
         <button data-act="qstep" data-key="${esc(it.key)}" data-d="1" aria-label="Somar 1 em ${esc(it.descricao)}">▲</button>
@@ -1341,6 +1337,36 @@ INP.qf = (el) => {
   el.classList.remove('bad');
   clearTimeout(debounceQ[key]);
   salvarQtd(key, pf.value, el);
+};
+INP.qkg = async (el) => {
+  const key = el.dataset.key;
+  const txt = el.value.trim();
+  if (txt === '') { el.classList.remove('bad', 'ok'); return; }
+  const pv = parsePeso(txt);
+  if (!pv.ok) { el.classList.add('bad'); toast(pv.error, 3500); return; }
+  el.classList.remove('bad');
+  const ctx = ctxAtual(); if (!ctx) return;
+  const it = ctx.itens(R.amb).find((x) => x.key === key); if (!it) return;
+  const e = it.e || {};
+  const atual = e.c ? (e.s ? 0 : (e.a || []).reduce((s2, g) => s2 + (g.b || 0), 0)) : null;
+  if (atual !== null && Math.abs(atual - pv.value) < 0.05) return;
+  if (!(await pedirNome(false))) return;
+  const now = Date.now();
+  const zero = pv.value === 0;
+  const entry = { c: true, s: zero, f: null, a: zero ? [] : [{ i: 'k', b: pv.value, t: 0, r: now }], o: e.o || '', u: now, p: S.me || '',
+    h: [...(e.h || []), { t: now, p: S.me || '', d: `${e.c ? 'Alterado' : 'Lançado'} na lista: ${zero ? 'sem estoque' : FA(pv.value / 1000, 3) + ' kg'}` }].slice(-4) };
+  try {
+    await comSync(async () => {
+      const ref = S.db.doc(`contagens/${R.cid}/lanc/${R.amb}`);
+      try { await ref.update({ i: { [key]: entry } }); }
+      catch (err) {
+        if (err && err.code === 'invalid_argument') { const sn = await ref.get(); if (!sn.exists) { await ref.set({ i: { [key]: entry } }); return; } }
+        throw err;
+      }
+    });
+    S.ui.recem = S.ui.recem || new Set(); S.ui.recem.add(key);
+    const inp = document.getElementById('q-' + key); if (inp) inp.classList.add('ok');
+  } catch (err) { toast(errMsg(err), 4000); el.classList.add('bad'); }
 };
 ACT.focoQtd = (el) => { const i = document.getElementById('q-' + el.dataset.key); if (i) { i.focus(); i.select && i.select(); } };
 ACT.qstep = (el) => {
@@ -1728,7 +1754,7 @@ VIEWS.item = (r) => {
 
   return `${topbar({ back: `#/c/${r.cid}/a/${r.amb}`, eyebrow: esc(ambNome(r.amb, h)),
     title: `${esc(it.descricao)}${it.varNome ? ` <span class="muted">· ${esc(it.varNome)}</span>` : ''}`,
-    extra: `<div class="small muted" style="margin-top:4px">${esc(it.codigo)} · ${esc(it.categoria)} · <b>${it.unidade}</b> · ${esc(FORMA_LABEL[it.forma] || '')}</div>` })}
+    extra: `<div class="small muted" style="margin-top:4px">${esc(it.codigo)} · ${esc(it.categoria)} · <b>${it.unidade}</b></div>` })}
   ${(() => { const hp = ctxParDe(h); if (!hp || !it.e) return ''; const vp = valorPar(hp, r.amb, it.key); return vp.estado === 'ok' ? `<div class="note n-info small" style="margin-top:10px">Domingo (${esc(rotuloC(hp.h))}): <b>${qtdTxt(vp.v, it.unidade)}</b> neste ambiente.</div>` : ''; })()}
   <div class="stack" style="margin-top:14px">
     ${d.restored ? '<div class="note n-info">Rascunho não salvo recuperado deste aparelho. Confira e salve.</div>' : ''}
@@ -1749,15 +1775,10 @@ VIEWS.item = (r) => {
       </div>
       <div id="f-msg" class="small muted">${esc(convHint)}</div>
     </section>` : ''}
-    ${it.forma !== 'fechadas' ? `<section class="card stack">
-      <div class="row between"><h3>${abLbl}</h3><span class="small muted">${d.a.length} ${d.a.length === 1 ? 'lançada' : 'lançadas'}</span></div>
-      <div class="note ${temTara ? 'n-info' : 'n-warn'} small">
-        Digite o peso da balança <b>em kg</b> (ex.: 2,350) e escolha o recipiente de cada pesagem — a tara dele é descontada.
-        ${temTara ? `Recipiente padrão deste item: <b>${F(p.taraG)} g</b>.` : 'Este item não tem recipiente padrão: escolha em cada pesagem.'}
-      </div>
-      ${ehGestor() ? `<button class="btn ghost small full" style="min-height:44px" data-act="salvarTara" data-key="${esc(it.key)}">${temTara ? `Mudar a tara padrão (hoje ${F(p.taraG)} g)` : 'Definir a tara padrão deste item'}</button>` : ''}
-      <div id="gl" class="stack">${d.a.map((g, ix) => garrafaHTML(g, ix, it)).join('')}</div>
-      <button class="btn big full" data-act="addG">+ ${addLbl}</button>
+    ${it.forma === 'peso' ? `<section class="card stack">
+      <h3>Peso na balança</h3>
+      <div class="unitwrap"><input id="f-kg" inputmode="decimal" data-in="fkg" value="${esc(d.a.map((g) => g.bText).filter(Boolean).length > 1 ? kgTxt(d.a.reduce((s2, g) => { const b = parsePeso(g.bText); return s2 + (b.ok && !b.empty ? b.value : 0); }, 0)) : (d.a[0] ? d.a[0].bText : ''))}" placeholder="ex.: 2,350" autocomplete="off" style="font-size:22px;font-weight:700;min-height:56px"><span class="u">kg</span></div>
+      <div class="small muted">Peso bruto, do jeito que sai na balança. Se o item estiver em mais de um lugar, some e digite o total.</div>
     </section>` : ''}`}
 
     <label class="f">Observação do lançamento<textarea id="obs" data-in="obs" placeholder="Opcional">${esc(d.o)}</textarea></label>
@@ -1807,7 +1828,7 @@ function calcHTML(it) {
   if (it.forma !== 'peso') cells.push(cell(it.unidade === 'UNID' ? 'Unidades' : E2.f, rr.fechadas === null ? '—' : `${rr.fechadas}`));
   if (it.unidade === 'LITRO' && it.forma !== 'peso') cells.push(cell('Litros das fechadas', v(rr.fechadasL, 3, ' L'), rr.fechadas === null ? '—' : 'pendente'));
   if (it.unidade === 'KG' && it.forma !== 'peso') cells.push(cell(`Kg das ${E2.pl} fechadas`, v(rr.fechadasKg, 3, ' kg'), rr.fechadas === null ? '—' : 'pendente'));
-  if (it.forma !== 'fechadas') {
+  if (it.forma === 'fechadas_abertas') {
     cells.push(cell('Pesagens', `${rr.nAbertas}`));
     if (it.unidade === 'KG') cells.push(cell('Kg pesados (líquido)', rr.nAbertas ? v(rr.kgAbertas, 3, ' kg') : '0 kg'));
     else cells.push(cell('Líquido nas abertas', rr.nAbertas ? (isNum(rr.volMl) ? `${F(rr.volMl)} ml` : null) : '0 ml'));
@@ -1817,7 +1838,7 @@ function calcHTML(it) {
   if (it.unidade === 'UNID') big = `<div class="big"><div class="k">Total neste ambiente</div><div class="v">${rr.totalOk ? `${F(rr.total)} un.` : '—'}</div></div>`;
   else big = `<div class="big"><div class="k">Total neste ambiente (${it.unidade})</div><div class="v ${rr.totalOk ? '' : 'pend'}">${rr.totalOk ? `${FA(rr.total, 3)} ${rr.totalRotulo}` : 'Cálculo pendente — sem total'}</div></div>`;
   const pend = rr.pendencias.filter((x) => x !== 'Não contado');
-  return `<div class="result">${cells.join('')}${big}</div>
+  return `<div class="result">${cells.length ? cells.join('') : ''}${big}</div>
     ${pend.length ? `<div class="note n-warn small" style="margin-top:8px">${pend.map(esc).join('<br>')}</div>` : ''}`;
 }
 function atualizarCalc() {
@@ -1891,6 +1912,13 @@ INP.gt = (el) => {
   const box = $(`#gr-${g.i}`); if (box) box.innerHTML = garrafaRes(g, it);
   atualizarCalc();
 };
+INP.fkg = (el) => {
+  const txt = el.value.trim();
+  S.draft.a = txt ? [{ i: 'k', bText: txt, t: 0, reg: null }] : [];
+  guardarRascunho();
+  const pb = parsePeso(txt); el.classList.toggle('bad', !pb.ok);
+  atualizarCalc();
+};
 INP.obs = (el) => { S.draft.o = el.value; guardarRascunho(); };
 
 function resumoLanc(en, it) {
@@ -1917,9 +1945,9 @@ ACT.salvar = async (el) => {
       const pb = parsePeso(g.bText);
       if (pb.empty) errs.push(`Informe o peso da ${nm} ${ix + 1} ou exclua-a.`);
       else if (!pb.ok) errs.push(`${cap(nm)} ${ix + 1}: ${pb.error}`);
-      else a.push({ i: g.i, b: pb.value, t: isNum(g.t) ? g.t : null, r: g.reg || Date.now() });
+      else a.push({ i: g.i, b: pb.value, t: 0, r: g.reg || Date.now() });
     });
-    if (it.forma === 'peso' && !d.a.length) errs.push('Adicione pelo menos uma pesagem ou marque Sem estoque.');
+    if (it.forma === 'peso' && !d.a.length) errs.push('Digite o peso em kg ou marque Sem estoque.');
   }
   if (errs.length) { await modal({ title: 'Falta completar', body: `<div class="note n-err">${errs.map(esc).join('<br>')}</div>`, actions: [{ label: 'Voltar ao lançamento', value: true, cls: 'pri' }] }); return; }
   const now = Date.now();
@@ -2118,7 +2146,7 @@ ACT.finalizarRapido = async (el) => {
   const parcial = !!(P.nc || P.conv);
   const ok = await modal({ title: 'Finalizar contagem?',
     body: parcial ? `${P.nc ? `<p><b>${P.nc}</b> ${P.nc === 1 ? 'item ficou' : 'itens ficaram'} em branco. Na planilha eles ficam vazios no ambiente (= não tinha lá), como na planilha de papel.</p>` : ''}
-      ${P.conv ? `<p><b>${P.conv}</b> ${P.conv === 1 ? 'item está' : 'itens estão'} sem recipiente ou peso da porção e ${P.conv === 1 ? 'sai' : 'saem'} como “pendente”.</p>` : ''}
+      ${P.conv ? `<p><b>${P.conv}</b> ${P.conv === 1 ? 'item está' : 'itens estão'} com cálculo pendente e ${P.conv === 1 ? 'sai' : 'saem'} como “pendente”.</p>` : ''}
       <label class="check"><input type="checkbox" id="m-ok"> Finalizar mesmo assim</label>`
       : '<p>Tudo contado. A contagem fica travada e a planilha Excel é gerada em seguida.</p>',
     actions: [{ label: 'Finalizar e gerar planilha', cls: 'pri', value: true, check: (m) => !parcial || m.querySelector('#m-ok').checked || (toast('Marque a confirmação'), false) },
@@ -2480,74 +2508,7 @@ async function gerarWorkbook(ctx, scope) {
   }
   ws.autoFilter = { from: { row: 6, column: 1 }, to: { row: Math.max(linha - 1, 6), column: colObs } };
 
-  /* ---------- Aba 2: Detalhe por item (fechadas, pesagens e total em cada local) ---------- */
-  const wt = wb.addWorksheet('Detalhe por item', { views: [{ state: 'frozen', xSplit: 2, ySplit: 2 }] });
-  const th = ['CÓDIGO', 'DESCRIÇÃO', 'VARIANTE', 'CATEGORIA', 'TIPO', 'UM'];
-  for (const a of ambs) th.push(`${a.nome} — SITUAÇÃO`, `${a.nome} — FECHADAS / UNID.`, `${a.nome} — PESAGENS`, `${a.nome} — KG PESADOS`, `${a.nome} — TOTAL`);
-  th.push('TOTAL GERAL', 'LOCAIS NÃO CONTADOS', 'PENDÊNCIAS', 'OBSERVAÇÕES');
-  wt.addRow([ctx.unif ? `Contagens unificadas: ${datasUnifTxt(ctx.unif)} · responsáveis ${h.responsavel}` : `Contagem de ${rotuloC(h)} · responsável ${h.responsavel} · ${STATUS_LABEL[h.status] || ''}`]).font = { bold: true, size: 11 };
-  cabecalhoVerde(wt.addRow(th));
-  wt.getRow(2).height = 44;
-  for (const row of rows) {
-    const it = row.info, lt = [codCell(it.codigo), it.descricao, it.varNomeFull || '', it.categoria, TIPO_LABEL[(S.produtos.get(it.codigo) || {}).tipo] || '', it.unidade];
-    for (const a of ids) {
-      const x = row.por[a];
-      if (!x) { lt.push('NÃO SE APLICA', null, null, null, null); continue; }
-      const rr = x.r;
-      if (rr.status === 'nao_contado') { lt.push('NÃO CONTADO', null, null, null, null); continue; }
-      lt.push(sitTxt(rr), x.forma === 'peso' ? null : rr.fechadas, rr.nAbertas, rr.nAbertas ? r3(rr.kgAbertas) : 0, rr.totalOk ? r3(rr.total) : 'pendente');
-    }
-    const k = row.cons;
-    lt.push(k.contados ? r3(k.total) : null, row.naoContadosEm.map((a) => (ambs.find((x) => x.id === a) || {}).nome).join(', '), row.pend.join(' | '), row.obs.join(' | '));
-    const rr2 = wt.addRow(lt);
-    rr2.eachCell((c) => { c.border = borda; c.font = { size: 10 }; });
-  }
-  wt.columns.forEach((c, i) => { c.width = i === 1 ? 44 : i === 3 ? 22 : 14; });
-  wt.autoFilter = { from: { row: 2, column: 1 }, to: { row: wt.rowCount, column: th.length } };
-
-  /* ---------- Aba 3: Pesagens ---------- */
-  const wd = wb.addWorksheet('Pesagens', { views: [{ state: 'frozen', ySplit: 2 }] });
-  const dh = ['DATA', 'LOCAL', 'CÓDIGO', 'DESCRIÇÃO', 'VARIANTE', 'Nº', 'PESO NA BALANÇA (kg)', 'TARA DO RECIPIENTE (g)', 'PESO LÍQUIDO (kg)', 'SITUAÇÃO / ALERTAS', 'REGISTRADO POR', 'REGISTRADO EM'];
-  wd.addRow([`Pesagens ${ctx.unif ? 'das contagens de ' + datasUnifTxt(ctx.unif) : 'da contagem de ' + rotuloC(h)} — peso líquido = balança − tara do recipiente`]).font = { bold: true, size: 11 };
-  cabecalhoVerde(wd.addRow(dh));
-  wd.getRow(2).height = 32;
-  for (const a of ambs) {
-    for (const it of ctx.itens(a.id)) {
-      const e = it.e; if (!e || !e.c || e.s || !Array.isArray(e.a) || !e.a.length || it.forma === 'fechadas') continue;
-      e.a.forEach((g, ix) => {
-        const ar = Calc.aberta(g, it.p, 'KG');
-        const ld = wd.addRow([dataBR(a.data || h.data), a.nome, codCell(it.codigo), it.descricao, it.varNomeFull || '', ix + 1,
-          r3(g.b / 1000), ar.taraG, null, [ar.erro, ...ar.pendencias, ...ar.alertas].filter(Boolean).join(' | ') || 'OK', e.p || '',
-          e.u ? new Date(g.r || e.u).toLocaleString('pt-BR') : '']);
-        const n = ld.number;
-        if (isNum(ar.kg)) ld.getCell(9).value = { formula: `G${n}-H${n}/1000`, result: r3(ar.kg) };
-        ld.getCell(7).numFmt = '#,##0.000'; ld.getCell(9).numFmt = '#,##0.000';
-        ld.eachCell((c) => { c.border = borda; c.font = { size: 10 }; });
-      });
-    }
-  }
-  if (wd.rowCount === 2) wd.addRow(['Nenhuma pesagem registrada.']);
-  wd.columns.forEach((c, i) => { c.width = i === 3 ? 42 : i === 1 ? 26 : i === 9 ? 40 : 14; });
-  wd.autoFilter = { from: { row: 2, column: 1 }, to: { row: Math.max(wd.rowCount, 3), column: dh.length } };
-
-  /* ---------- Aba 4: Parâmetros usados ---------- */
-  const wp = wb.addWorksheet('Parâmetros usados', { views: [{ state: 'frozen', ySplit: 2 }] });
-  const ph = ['CÓDIGO', 'DESCRIÇÃO', 'VARIANTE', 'CATEGORIA', 'UM', 'FORMA DE CONTAGEM', 'EMBALAGEM', 'PESO POR EMBALAGEM / PORÇÃO (g)', 'TARA PADRÃO (g)', 'CAMPOS PENDENTES NO CADASTRO'];
-  wp.addRow([ctx.congelado ? 'Parâmetros registrados no encerramento desta contagem' : 'Parâmetros do cadastro atual (contagem não finalizada)']).font = { bold: true, size: 11 };
-  cabecalhoVerde(wp.addRow(ph));
-  wp.getRow(2).height = 32;
-  for (const row of rows) {
-    const it = row.info, p = it.p;
-    const pend = Calc.camposPendentes({ unidade: it.unidade, forma: it.formaProd || it.forma }, p);
-    const lp = wp.addRow([codCell(it.codigo), it.descricao, it.varNomeFull || '', it.categoria, it.unidade,
-      FORMA_LABEL[it.formaProd || it.forma], cap(embL(it.embalagem).s), p.pesoLiqG ?? null, p.taraG ?? null, pend.join(', ')]);
-    lp.eachCell((c) => { c.border = borda; c.font = { size: 10 }; });
-    if (pend.length) lp.getCell(10).font = { size: 10, color: { argb: 'FF8F5A00' } };
-  }
-  wp.columns.forEach((c, i) => { c.width = i === 1 ? 44 : i === 9 ? 36 : 16; });
-  wp.autoFilter = { from: { row: 2, column: 1 }, to: { row: wp.rowCount, column: ph.length } };
-
-  /* ---------- Aba 5: Domingo × Segunda (quando a contagem faz parte de um par) ---------- */
+  /* ---------- Aba 2: Domingo × Segunda (quando a contagem faz parte de um par) ---------- */
   if (!ctx.unif) {
     let dom = null, seg = null;
     if (h.tipo === 'segunda' && h.par && contagem(h.par)) { const c = await carregarContagem(h.par); dom = ctxDe(contagem(h.par), c.lanc, c.snap); seg = ctx; }
@@ -2811,7 +2772,7 @@ VIEWS.comparar = (r) => {
       <div class="card"><div class="eyebrow">Divergentes</div><div class="num" style="font-size:28px;font-weight:700;font-family:var(--f-head);color:${nDiv ? 'var(--danger)' : 'var(--ok)'}">${nDiv}</div></div>
       <div class="card"><div class="eyebrow">Sem contagem em uma delas</div><div class="num" style="font-size:28px;font-weight:700;font-family:var(--f-head)">${nFalt}</div></div>
     </div>
-    <div class="note n-info small">Diferença entre o que foi <b>contado</b> (B − A). ⚠ = passou de <b>${FA(c.limKg ?? 0.5, 3)} kg</b> (ou ${F(c.limUn ?? 2)} un.) <b>ou</b> de <b>${F(c.limPct ?? 10)}%</b>${ehGestor() ? ' — ajuste em Cadastro › Ajustes' : ''}. ${par ? 'Entre domingo e segunda a cozinha pode ter produzido ou usado itens: confira antes de concluir que houve erro.' : ''}</div>
+    <div class="note n-info small">Diferença entre o que foi <b>contado</b> (B − A). ⚠ = passou de <b>${FA(c.limKg ?? 0.5, 3)} kg</b> (ou ${F(c.limUn ?? 2)} un.) <b>ou</b> de <b>${F(c.limPct ?? 10)}%</b>${ehGestor() ? ' — ajuste em Cadastro › Limites' : ''}. ${par ? 'Entre domingo e segunda a cozinha pode ter produzido ou usado itens: confira antes de concluir que houve erro.' : ''}</div>
     ${faltaA.length ? `<div class="note n-warn small">Local fora da contagem A: <b>${faltaA.map((x) => esc(ambNome(x))).join(', ')}</b></div>` : ''}
     ${faltaB.length ? `<div class="note n-warn small">Local fora da contagem B: <b>${faltaB.map((x) => esc(ambNome(x))).join(', ')}</b></div>` : ''}
     <div class="chips"><button class="chip ${esc2 === 'cons' ? 'on' : ''}" data-act="cmpAmb" data-k="cons">Todos os locais</button>${union.map((a) => `<button class="chip ${esc2 === a ? 'on' : ''}" data-act="cmpAmb" data-k="${a}">${esc(ambNome(a))}</button>`).join('')}</div>
@@ -2829,12 +2790,12 @@ function pendCount(p) {
   return (p.variantes || []).filter((v) => v.ativo !== false).reduce((n, v) => n + Calc.camposPendentes(p, v).length, 0);
 }
 function cadTabs(tab) {
-  return `<div class="seg" style="margin-top:12px">${[['prod', 'Produtos'], ['amb', 'Ambientes'], ['ajustes', 'Taras'], ['equipe', 'Equipe'], ['imp', 'Importar']].map(([k, l]) =>
+  return `<div class="seg" style="margin-top:12px">${[['prod', 'Produtos'], ['amb', 'Ambientes'], ['ajustes', 'Limites'], ['equipe', 'Equipe'], ['imp', 'Importar']].map(([k, l]) =>
     `<button data-act="go" data-to="#/cad/${k}" class="${tab === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
 }
 VIEWS.cad = (r) => {
   const tab = r.tab;
-  const head = `${topbar({ back: '#/gestao', eyebrow: 'Cadastro', title: tab === 'amb' ? 'Ambientes (câmaras)' : tab === 'equipe' ? 'Equipe' : tab === 'imp' ? 'Importar planilha' : tab === 'ajustes' ? 'Recipientes e limites' : 'Produtos' })}${cadTabs(tab)}`;
+  const head = `${topbar({ back: '#/gestao', eyebrow: 'Cadastro', title: tab === 'amb' ? 'Ambientes (câmaras)' : tab === 'equipe' ? 'Equipe' : tab === 'imp' ? 'Importar planilha' : tab === 'ajustes' ? 'Limites Domingo × Segunda' : 'Produtos' })}${cadTabs(tab)}`;
   if (tab === 'equipe') return head + viewEquipe();
   if (tab === 'amb') return head + viewAmbientes();
   if (tab === 'imp') return head + viewImportar();
@@ -2858,9 +2819,8 @@ VIEWS.cad = (r) => {
     <button class="btn big pri full" data-act="go" data-to="#/cad/p/novo">Novo produto</button>
     <div class="search">${ICON.search}<input id="cb" type="search" data-in="cadBusca" placeholder="Buscar por nome ou código" value="${esc(u.cadBusca)}"></div>
     <select id="ccat" data-ch="cadCat"><option value="">Todas as categorias</option>${cats.map((c) => `<option ${u.cadCat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
-    <div class="seg">${[['todos', 'Ativos'], ['conf', `A conferir (${comConf})`], ['pend', `Sem peso da porção (${comPend})`], ['inat', 'Inativos']].map(([k, l]) => `<button data-act="cadFiltro" data-k="${k}" class="${u.cadFiltro === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div class="seg">${[['todos', 'Ativos'], ['conf', `A conferir (${comConf})`], ['inat', 'Inativos']].map(([k, l]) => `<button data-act="cadFiltro" data-k="${k}" class="${u.cadFiltro === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     ${comConf ? `<div class="note n-warn small"><b>${comConf} produtos a conferir</b>: vieram da planilha sem código, sem unidade ou com unidade suspeita. Abra cada um, confira e toque em “Marcar como conferido”.</div>` : ''}
-    ${comPend ? '<div class="note n-warn small">Alguns produtos contam embalagens/porções fechadas mas não têm o peso de cada uma. Preencha para os kg saírem completos.</div>' : ''}
     <div class="small muted">${lista.length} produtos</div>
     <div id="clist">${cadListaHTML(lista)}</div>
   </div>`;
@@ -2872,7 +2832,7 @@ function cadListaHTML(lista) {
     const n = pendCount(p);
     out += `<div class="li">
       <button class="qthumb" data-act="fotoItem" data-key="${esc(p.codigo)}" aria-label="Foto de ${esc(p.descricao)}">${miniHTML(p)}</button>
-      <button class="grow" style="background:none;border:0;padding:0;text-align:left;font:inherit;color:inherit" data-act="go" data-to="#/cad/p/${encodeURIComponent(p.codigo)}"><span class="nm">${esc(p.descricao)}</span><br><span class="meta">${esc(p.codigo)} · ${p.unidade} · ${p.tipo ? esc(p.tipo === 'INSUMO' ? 'insumo' : p.tipo) + ' · ' : ''}${FORMA_LABEL[p.forma]}${(p.variantes || []).length > 1 ? ` · ${(p.variantes || []).length} variantes` : ''}</span></button>
+      <button class="grow" style="background:none;border:0;padding:0;text-align:left;font:inherit;color:inherit" data-act="go" data-to="#/cad/p/${encodeURIComponent(p.codigo)}"><span class="nm">${esc(p.descricao)}</span><br><span class="meta">${esc(p.codigo)} · ${p.unidade} · ${p.tipo ? esc(p.tipo === 'INSUMO' ? 'insumo' : p.tipo) : ''}</span></button>
       ${p.ativo === false ? '<span class="pill p-pend">Inativo</span>' : (p.conferir || []).length ? '<span class="pill p-warn">Conferir</span>' : n ? `<span class="pill p-warn">${n} pendente${n > 1 ? 's' : ''}</span>` : '<span class="pill p-ok">Completo</span>'}</div>`;
   }
   return (out + (open ? '</div>' : '')) || '<p class="muted">Nenhum produto.</p>';
@@ -2907,17 +2867,13 @@ VIEWS.produto = (r) => {
   const pendTotal = d.variantes.filter((v) => v.ativo !== false).reduce((n, v) => n + Calc.camposPendentes(d, v).length, 0);
   return `${topbar({ back: '#/cad', eyebrow: d._novo ? 'Novo produto' : 'Editar produto', title: esc(d.descricao || 'Sem descrição') })}
   <div class="stack" style="margin-top:14px">
-    ${pendTotal ? `<div class="note n-warn small">${pendTotal} campo(s) destacado(s) precisam ser preenchidos para os cálculos saírem completos.</div>` : ''}
     <section class="card stack">
       <h3>Identificação</h3>
       <label class="f">Código${d._novo ? '' : ' <span class="hint">(não editável — identifica o produto no histórico)</span>'}<input id="p-codigo" data-in="pf" data-k="codigo" value="${esc(d.codigo)}" ${d._novo ? '' : 'readonly'} inputmode="numeric"></label>
       <label class="f">Nome / descrição<input id="p-desc" data-in="pf" data-k="descricao" value="${esc(d.descricao)}"></label>
       <label class="f">Categoria<input id="p-cat" data-in="pf" data-k="categoria" value="${esc(d.categoria)}" list="dl-cats"><datalist id="dl-cats">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
       <label class="f">Marca <span class="hint">opcional</span><input id="p-marca" data-in="pf" data-k="marca" value="${esc(d.marca || '')}"></label>
-      <div class="grid2">
-        <label class="f">Unidade<select id="p-un" data-ch="pfs" data-k="unidade">${['KG', 'UNID'].map((u) => `<option ${d.unidade === u ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
-        <label class="f">Forma de contagem<select id="p-forma" data-ch="pfs" data-k="forma">${Object.entries(FORMA_LABEL).map(([k, l]) => `<option value="${k}" ${d.forma === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      </div>
+      <label class="f">Unidade<select id="p-un" data-ch="pfs" data-k="unidade">${['KG', 'UNID'].map((u) => `<option ${d.unidade === u ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
       <label class="f">Tipo<select id="p-tipo" data-ch="pfs" data-k="tipo">${Object.entries(TIPO_LABEL).map(([k, l]) => `<option value="${k}" ${(d.tipo || 'INSUMO') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <div class="small muted">Marcas que usam: ${Object.entries(Defaults.MARCAS).map(([k, l]) => `<label class="check small" style="display:inline-flex;margin-right:10px"><input type="checkbox" data-ch="pmarca" value="${k}" ${(d.marcas || []).includes(k) ? 'checked' : ''}> ${k}</label>`).join('')}</div>
       <label class="check"><input type="checkbox" id="p-ativo" data-ch="pfc" data-k="ativo" ${d.ativo !== false ? 'checked' : ''}> Produto ativo</label>
@@ -2925,16 +2881,10 @@ VIEWS.produto = (r) => {
     </section>
 
     <section class="card stack">
-      <div class="row between"><h3>Embalagens / variantes</h3><button class="btn" data-act="addVar">+ Variante</button></div>
-      <p class="small muted" style="margin:0">Cada tamanho é uma variante contada separado. Ex.: Ancho porção 400 g e porção 600 g. Na planilha final as variantes do mesmo código são somadas.</p>
-      ${d.variantes.map((v, ix) => varHTML(d, v, ix)).join('')}
-    </section>
-
-    <section class="card stack">
       <h3>Ambientes em que é contado</h3>
       ${ambAtivos().map((a) => { const c = d.amb && d.amb[a.id]; return `<div class="row between" style="border-bottom:1px solid var(--line);padding-bottom:8px">
         <label class="check"><input type="checkbox" id="pa-${a.id}" data-ch="pamb" data-a="${a.id}" ${c ? 'checked' : ''}> ${esc(a.nome)}</label>
-        ${d.forma === 'fechadas_abertas' ? `<label class="check small"><input type="checkbox" id="pab-${a.id}" data-ch="pambab" data-a="${a.id}" ${c && c.abertas !== false ? 'checked' : ''} ${c ? '' : 'disabled'}> pesar abertas</label>` : ''}</div>`; }).join('')}
+        </div>`; }).join('')}
     </section>
 
     <section class="card stack">
@@ -3024,23 +2974,12 @@ ACT.salvarProd = async (el) => {
   else if (!/^[A-Za-z0-9_.\-]+$/.test(codigo) || codigo === '.' || codigo === '..') errs.push('Código deve ter apenas letras, números, ponto, hífen ou sublinhado.');
   else if (d._novo && S.produtos.has(codigo)) errs.push(`Já existe um produto com o código ${codigo}.`);
   if (!String(d.descricao || '').trim()) errs.push('Informe a descrição.');
-  if (!d.variantes.length) errs.push('Cadastre pelo menos uma variante.');
-  const nomes = new Set();
-  const vars = d.variantes.map((v, ix) => {
-    const o = { id: v.id, nome: String(v.nome || '').trim() || `Variante ${ix + 1}`, embalagem: v.embalagem, metodo: 'B', densidade: null, condPesagem: String(v.condPesagem || '').trim(), ativo: v.ativo !== false, notas: v.notas || {} };
-    if (nomes.has(o.nome)) errs.push(`Duas variantes com o nome "${o.nome}".`); nomes.add(o.nome);
-    for (const [k, l] of NUMF) {
-      const pr = (k === 'densidade' ? parseD : parseF)(v['_' + k]);
-      if (!pr.ok) errs.push(`Variante ${ix + 1} — ${l}: ${pr.error}`);
-      o[k] = pr.ok ? pr.value : null;
-      if (pr.ok && pr.value === 0 && k !== 'taraG') errs.push(`Variante ${ix + 1} — ${l} não pode ser zero.`);
-    }
-    return o;
-  });
+  const vars = [{ id: (d.variantes[0] && d.variantes[0].id) || 'v1', nome: 'Padrão', embalagem: d.unidade === 'UNID' ? 'unidade' : 'pacote', volumeMl: null, pesoLiqG: null, taraG: 0,
+    pesoCheioG: null, densidade: null, metodo: '', condPesagem: '', ativo: true, notas: {} }];
   if (errs.length) { await modal({ title: 'Revise o cadastro', body: `<div class="note n-err">${errs.map(esc).join('<br>')}</div>`, actions: [{ label: 'Voltar', value: true, cls: 'pri' }] }); return; }
-  const doc = { codigo, descricao: d.descricao.trim(), categoria: String(d.categoria || '').trim().toUpperCase() || Defaults.categoriaPara(d.descricao), marca: String(d.marca || '').trim(), unidade: d.unidade, forma: d.unidade === 'UNID' ? 'fechadas' : d.forma,
+  const doc = { codigo, descricao: d.descricao.trim(), categoria: String(d.categoria || '').trim().toUpperCase() || Defaults.categoriaPara(d.descricao), marca: String(d.marca || '').trim(), unidade: d.unidade, forma: d.unidade === 'UNID' ? 'fechadas' : 'peso',
     tipo: d.tipo || 'INSUMO', marcas: d.marcas || [], conferir: d.conferir || [],
-    amb: d.amb || {}, foto: d.foto || null, fotoMini: d.fotoMini || null, fotoUrl: d.fotoUrl || '', obs: String(d.obs || '').trim(), ativo: d.ativo !== false, origem: d.origem || (d._novo ? 'Cadastro manual' : ''),
+    amb: Object.fromEntries(Object.keys(d.amb || {}).map((k) => [k, { abertas: false }])), foto: d.foto || null, fotoMini: d.fotoMini || null, fotoUrl: d.fotoUrl || '', obs: String(d.obs || '').trim(), ativo: d.ativo !== false, origem: d.origem || (d._novo ? 'Cadastro manual' : ''),
     variantes: vars, criadoEm: d.criadoEm || Date.now(), atualizadoEm: Date.now(), atualizadoPor: S.me || '' };
   S.saving = true; el.disabled = true;
   try {
@@ -3226,12 +3165,6 @@ function viewAjustes() {
   const rs = [...(S.recipientes || [])].sort((a, b) => collator.compare(a.nome || '', b.nome || ''));
   const c = S.config || {};
   return `<div class="stack" style="margin-top:14px">
-    <section class="card stack">
-      <h3>Recipientes</h3>
-      <p class="small muted" style="margin:0">Na hora de pesar, o contador escolhe o recipiente e o app desconta a tara. Pese cada recipiente vazio (com tampa, se pesam com tampa) e cadastre aqui.</p>
-      <div class="list">${rs.length ? rs.map((r) => `<button class="li" data-act="editRecip" data-id="${esc(r.id)}"><span class="grow"><span class="nm">${esc(r.nome)}</span><br><span class="meta">${F(r.taraG)} g</span></span>${r.ativo === false ? '<span class="pill p-pend">Inativo</span>' : ''}</button>`).join('') : '<div class="li muted" style="cursor:default">Nenhum recipiente cadastrado ainda.</div>'}</div>
-      <button class="btn big pri full" data-act="editRecip" data-id="">+ Novo recipiente</button>
-    </section>
     <section class="card stack">
       <h3>Divergência Domingo × Segunda</h3>
       <p class="small muted" style="margin:0">Um item fica marcado ⚠ quando a diferença passa de qualquer um destes limites.</p>
