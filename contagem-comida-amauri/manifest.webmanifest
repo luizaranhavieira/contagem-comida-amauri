@@ -1,0 +1,16 @@
+{
+  "name": "Contagem de Comida — Mercearia Amauri",
+  "short_name": "Comida",
+  "id": "./?app=contagem-comida",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1B431D",
+  "theme_color": "#1B431D",
+  "lang": "pt-BR",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
