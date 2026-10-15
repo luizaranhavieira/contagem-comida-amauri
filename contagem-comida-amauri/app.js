@@ -1026,20 +1026,13 @@ VIEWS.nova = () => {
     <p class="small muted" style="margin:0">Para começar outra, finalize (em Revisar contagem) ou exclua a atual.</p>
   </div>`;
   const n = S.ui.novo || (S.ui.novo = { data: hojeISO(), resp: S.me || (S.user && S.user.nome) || '', ambs: ambAtivos().map((a) => a.id), tipo: tipoPorData(hojeISO()), par: '' });
-  const cands = n.tipo === 'segunda' ? domingosCandidatos(n.data) : [];
-  if (n.tipo === 'segunda' && !cands.some((c) => c.id === n.par)) n.par = cands[0] ? cands[0].id : '';
-  const parH = n.par && contagem(n.par);
+  // tipo automático pela data: domingo, segunda (confere o domingo anterior) ou extra
+  n.tipo = tipoPorData(n.data || hojeISO());
+  n.par = n.tipo === 'segunda' && domingoPara(n.data) ? domingoPara(n.data).id : '';
+  if (n.tipo === 'segunda' && !n.par) n.tipo = 'extra';
   return `${topbar({ back: '#/', eyebrow: 'Nova contagem', title: 'Iniciar contagem' })}
   <div class="stack" style="margin-top:16px">
     <label class="f">Data da contagem<input type="date" id="n-data" data-ch="novoData" value="${esc(n.data)}"></label>
-    <div class="eyebrow">Tipo de contagem</div>
-    <div class="seg">${[['domingo', 'Domingo'], ['segunda', 'Segunda (conferência)'], ['extra', 'Extra']].map(([k, l]) =>
-      `<button data-act="novoTipo" data-k="${k}" class="${n.tipo === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-    ${n.tipo === 'segunda' ? (cands.length ? `<label class="f">Confere a contagem de<select id="n-par" data-ch="novoPar">${cands.map((c) =>
-      `<option value="${c.id}" ${n.par === c.id ? 'selected' : ''}>${esc(rotuloC(c))} · ${esc(c.responsavel)}</option>`).join('')}</select></label>
-      <p class="small muted" style="margin:0">Durante a contagem, o número do domingo aparece ao lado de cada item só depois que você lançar. No fim, abre a comparação Domingo × Segunda.</p>
-      ${parH && segundaDe(parH.id) ? `<div class="note n-warn small">Esse domingo já tem uma conferência (${esc(rotuloC(segundaDe(parH.id)))}). Uma nova substitui a comparação.</div>` : ''}`
-      : '<div class="note n-warn small">Não há contagem de domingo finalizada para conferir. Finalize a de domingo antes, ou faça esta como “Extra”.</div>') : ''}
     <label class="f">Responsável<input id="n-resp" data-in="novo" data-k="resp" value="${esc(n.resp)}" placeholder="Nome de quem responde pela contagem" autocomplete="name"></label>
     <div class="eyebrow">Ambientes desta contagem</div>
     <div class="list">${ambAtivos().map((a) => {
@@ -1065,7 +1058,9 @@ ACT.criarContagem = async (btn) => {
   if (!n.data) return toast('Informe a data da contagem');
   if (!n.resp.trim()) { toast('Informe o responsável'); $('#n-resp').focus(); return; }
   if (!n.ambs.length) return toast('Marque pelo menos um ambiente para contar');
-  if (n.tipo === 'segunda' && !n.par) return toast('Escolha a contagem de domingo que esta segunda confere, ou marque Extra', 4000);
+  n.tipo = tipoPorData(n.data);
+  n.par = n.tipo === 'segunda' && domingoPara(n.data) ? domingoPara(n.data).id : '';
+  if (n.tipo === 'segunda' && !n.par) n.tipo = 'extra';
   if (S.saving) return;
   const ab = contagemAberta();
   if (ab) { toast('Já existe uma contagem aberta — continuando nela'); go(`#/c/${ab.id}`); return; }
